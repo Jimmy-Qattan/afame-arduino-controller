@@ -1,0 +1,227 @@
+<html>
+  <head>
+    <style></style>
+    <meta charset="UTF-8" />
+    <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
+  </head>
+  <body>
+    <a-scene>
+      <a-camera
+        look-controls="enabled: false"
+        position="0 1.6 0"
+        id="cameraview"
+      ></a-camera>
+      <a-box position="-1 0.5 -3" rotation="0 45 0" color="#4CC3D9"></a-box>
+      <a-plane rotation="-90 0 0" color="green" width="8" height="8"></a-plane>
+      <a-sky color="powderblue"></a-sky>
+      <a-box
+        id="testBlock"
+        color="yellow"
+        position="1 0.5 -3"
+        rotation="0 0 0"
+      ></a-box>
+    </a-scene>
+
+    <script>
+      class SerialController {
+        constructor() {
+          this.encoder = new TextEncoder();
+          this.decoder = new TextDecoder();
+        }
+        async init() {
+          if ("serial" in navigator) {
+            try {
+              const port = await navigator.serial.requestPort();
+              await port.open({ baudRate: 9600 });
+              this.reader = port.readable.getReader();
+              this.writer = port.writable.getWriter();
+              this.opened = true;
+            } catch (err) {
+              console.error("There was an error opening the serial port:", err);
+            }
+          } else {
+            console.error(
+              "Web serial doesn't seem to be enabled in your browser. Try enabling it by visiting:"
+            );
+            console.error(
+              "chrome://flags/#enable-experimental-web-platform-features"
+            );
+            console.error(
+              "opera://flags/#enable-experimental-web-platform-features"
+            );
+            console.error(
+              "edge://flags/#enable-experimental-web-platform-features"
+            );
+          }
+        }
+        async write(data) {
+          const dataArrayBuffer = this.encoder.encode(data);
+          return await this.writer.write(dataArrayBuffer);
+        }
+        async read() {
+          try {
+            const readerData = await this.reader.read();
+            return this.decoder.decode(readerData.value);
+          } catch (err) {
+            const errorMessage = `error reading data: ${err}`;
+            console.error(errorMessage);
+            return errorMessage;
+          }
+        }
+      }
+
+      const serialController = new SerialController();
+      window.addEventListener("keypress", function(e) {
+        if (e.key == "y") {
+          serialController.init();
+        }
+      });
+
+      let cameraview = document.getElementById("cameraview");
+
+      let column, row;
+      let stringFinal;
+      let stringToInt;
+      window.setInterval(() => {
+        const newColumn = THREE.Math.clamp(
+          Math.floor(cameraview.object3D.position.x) + 4,
+          0,
+          7
+        );
+        const newRow = THREE.Math.clamp(
+          Math.floor(cameraview.object3D.position.z) + 4,
+          0,
+          7
+        );
+
+        let positionChanged = false;
+        if (newColumn != column) {
+          column = newColumn;
+          positionChanged = true;
+        }
+        if (newRow != row) {
+          row = newRow;
+          positionChanged = true;
+        }
+        if (positionChanged) {
+          updatePosition();
+        }
+      }, 100);
+
+      let testBlock = document.getElementById("testBlock");
+
+      // https://www.gamedev.net/tutorials/programming/general-and-gameplay-programming/inverse-lerp-a-super-useful-yet-often-overlooked-function-r5230/
+      function inverseLerp(x, y, value) {
+        if (x !== y) {
+          return (value - x) / (y - x);
+        } else {
+          return 0;
+        }
+      }
+
+      let fullString = "";
+      const box = document.querySelector("a-box");
+      window.setInterval(() => {
+        if (serialController.opened) {
+          serialController.read().then(string => {
+            fullString += string;
+            if (fullString.includes(";")) {
+              const strings = fullString.split(";");
+              fullString = strings.pop();
+              strings.forEach(string => {
+                const type = string[0];
+                string = string.substr(1);
+                switch (type) {
+                  case "0":
+                    let [joyX, joyY] = string
+                      .split(",")
+                      .map(
+                        string => inverseLerp(0, 1023, Number(string)) * 2 - 1
+                      );
+                    joyX *= -1;
+                    joyY *= -1;
+                    if (!isNaN(joyX) && !isNaN(joyY)) {
+                      cameraview.object3D.rotation.x += joyY * 0.01;
+                      cameraview.object3D.rotation.y += joyX * 0.01;
+                    }
+                    break;
+                  case "1":
+                    let distance = Number(string);
+                    if (!isNaN(distance) && distance < 1000) {
+                      distance = THREE.MathUtils.clamp(distance, 0, 300)
+                      distance = (inverseLerp(0, 300, distance) * 2) - 1;
+                      distance *= -1;
+                      const offsetVector = new THREE.Vector3(0, 0, -0.03).applyEuler(cameraview.object3D.rotation);
+                      offsetVector.multiplyScalar(distance)
+                      offsetVector.y = 0;
+                      cameraview.object3D.position.add(offsetVector);
+                    }
+                    break;
+                }
+              });
+            }
+          });
+        }
+      }, 100);
+
+      /*window.setInterval(function() {
+        return;
+        if (serialController.opened) {
+          serialController.read().then(value => {
+            stringFinal = `${value[0]}${value[1]}${value[2]}`;
+            stringToInt = parseInt(`${stringFinal}`);
+
+            const movementVector = new THREE.Vector3(0, 0, -1).applyEuler(
+              cameraview.object3D.rotation
+            );
+
+            if (stringToInt >= 0 && stringToInt < 100) {
+              movementVector.multiplyScalar(stringToInt / 150);
+              movementVector.y = 0;
+              //cameraview.object3D.position.add(movementVector);
+              cameraview.object3D.position.add(movementVector);
+            }
+          });
+        }
+      }); */
+
+      function countDigitsInNumberMAX6(num) {
+        let digits = 0;
+        if (num >= 0 && num < 10) {
+          digits = 1;
+        } else if (num >= 10 && num < 100) {
+          digits = 2;
+        } else if (num >= 100 && num < 1000) {
+          digits = 3;
+        } else if (num >= 1000 && num < 10000) {
+          digits = 4;
+        } else if (num >= 10000 && num < 100000) {
+          digits = 5;
+        } else if (num >= 100000 && num < 1000000) {
+          digits = 6;
+        }
+        return digits;
+      }
+
+     /* window.setInterval(function() {
+        return;
+        serialController.read().then(value => {
+          if (serialController.opened) {
+            let stringFinal2 = `${value[0]}${value[1]}${value[2]}${value[3]}${
+              value[4]
+            }`;
+            let stringToIntFinal2 = parseInt(stringFinal2);
+
+            console.log(stringFinal2);
+          }
+        });
+      }, 1000);*/
+
+      function updatePosition() {
+        if (serialController.opened) {
+          serialController.write(`${row},${column}`);
+        }
+      }
+    </script>
+  </body>
+</html>
